@@ -7,7 +7,7 @@ local SOLUTIONS = vim.fn.stdpath("data") .. "/solutions"
 -- clangd 配置：力扣的解答是单文件、没有 compile_commands.json，
 -- 关键的是 `Compiler: g++`——clangd 会用 g++ 当驱动去问系统头文件路径，
 -- 否则 `#include <bits/stdc++.h>`、libstdc++ 的头文件会全部报红。
-local CLANGD_CONFIG = [[
+local CLANGD_CONFIG = string.format([[
 # 由 ~/.config/leetcode/lua/plugins/leetcode.lua 生成
 # 文件被删掉的话，下次打开力扣会自动重建；你手动改过的内容不会被覆盖
 CompileFlags:
@@ -20,11 +20,95 @@ CompileFlags:
     - -Wno-unused-variable
     - -Wno-sign-compare
     - -Wno-return-type
+    # 强制包含类型桩（TreeNode / ListNode / Node 等），
+    # 否则力扣把结构体定义放在块注释里，整个文件都会报 Unknown type name
+    - -include
+    - %s/lc-stubs.h
 Completion:
   ArgumentLists: FullPlaceholders
 Index:
   # 一堆互不相干的单文件，没必要后台建索引
   Background: Skip
+]], SOLUTIONS)
+
+-- 类型桩头文件：只给 clangd 看，不进解答文件、不影响判题
+local LC_STUBS = [[
+// 力扣本地分析用的类型桩（stub header）
+//
+// 由 ~/.config/leetcode/lua/plugins/leetcode.lua 生成，删掉会自动重建。
+//
+// 为什么需要它：
+// 力扣的 C++ 模板把 TreeNode / ListNode 这类结构体的定义放在**块注释**里，
+//     /**
+//      * Definition for a binary tree node.
+//      * struct TreeNode { ... };
+//      */
+// clangd 看不到注释里的代码，所以整个文件都会报 "Unknown type name 'TreeNode'"。
+//
+// 这个文件通过 .clangd 里的 `-include` 强制喂给 clangd，只用于本地静态分析：
+// 不会出现在你的解答文件里，也不影响判题（判题器自己带着这些定义）。
+//
+// 遇到别的题目类型报 Unknown type name，照着下面加一个即可。
+
+#pragma once
+
+#include <string>
+#include <vector>
+
+// 树题：104. 二叉树的最大深度、94. 中序遍历 …
+struct TreeNode {
+    int val;
+    TreeNode *left;
+    TreeNode *right;
+    TreeNode() : val(0), left(nullptr), right(nullptr) {}
+    TreeNode(int x) : val(x), left(nullptr), right(nullptr) {}
+    TreeNode(int x, TreeNode *left, TreeNode *right) : val(x), left(left), right(right) {}
+};
+
+// 链表题：2. 两数相加、206. 反转链表 …
+struct ListNode {
+    int val;
+    ListNode *next;
+    ListNode() : val(0), next(nullptr) {}
+    ListNode(int x) : val(x), next(nullptr) {}
+    ListNode(int x, ListNode *next) : val(x), next(next) {}
+};
+
+// Node 在力扣里有好几种形状：133. 克隆图用 neighbors、
+// 138. 随机链表的复制用 next+random、589. N-ary 树用 children。
+// 这里写成"成员全都带上"的宽松版本，避免换个题就报 No member named ...
+struct Node {
+    int val = 0;
+    Node *next = nullptr;
+    Node *random = nullptr;
+    Node *left = nullptr;
+    Node *right = nullptr;
+    Node *child = nullptr;
+    std::vector<Node *> neighbors;
+    std::vector<Node *> children;
+
+    Node() = default;
+    Node(int v) : val(v) {}
+    Node(int v, std::vector<Node *> kids) : val(v), neighbors(kids), children(kids) {}
+};
+
+// 341. 扁平化嵌套列表迭代器、339. 嵌套列表权重和
+class NestedInteger {
+public:
+    bool isInteger() const;
+    int getInteger() const;
+    void setInteger(int value);
+    void add(const NestedInteger &ni);
+    const std::vector<NestedInteger> &getList() const;
+};
+
+// 690. 员工的重要性
+class Employee {
+public:
+    int id = 0;
+    int importance = 0;
+    std::vector<int> subordinates;
+};
 ]]
 
 -- clang-format 风格：clangd 内置的格式化器（保存时格式化用的就是它）会读这个文件
@@ -93,6 +177,7 @@ return {
     setup_keymaps()
     ensure_file(SOLUTIONS .. "/.clangd", CLANGD_CONFIG)
     ensure_file(SOLUTIONS .. "/.clang-format", CLANG_FORMAT)
+    ensure_file(SOLUTIONS .. "/lc-stubs.h", LC_STUBS)
   end,
 
   opts = {

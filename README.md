@@ -17,7 +17,7 @@ leetcode   # = NVIM_APPNAME=leetcode nvim leetcode.nvim
 | --- | --- |
 | `~/.config/leetcode` | 本仓库（配置，就是这里） |
 | `~/.local/share/leetcode` | 插件、treesitter parser |
-| `~/.local/share/leetcode/solutions` | 解答文件（如 `1.two-sum.cpp`）+ `.clangd` / `.clang-format`（自动生成） |
+| `~/.local/share/leetcode/solutions` | 解答文件（如 `1.two-sum.cpp`）+ `.clangd` / `.clang-format` / `lc-stubs.h`（自动生成） |
 | `~/.cache/leetcode` | cookie、题库缓存 |
 
 ## 快捷键
@@ -58,6 +58,29 @@ ColumnLimit: 120  # LLVM 默认 80 列换行，嫌窄就放宽
 - 屏蔽了力扣场景下的噪音警告（模板没写 main、形参用不到、函数体还空着的 return-type 等）
 
 补全/签名提示用 blink.cmp，inlay hints 之类走 clangd 默认能力。
+
+### 类型桩：解决 `Unknown type name 'TreeNode'`
+
+力扣的 C++ 模板把结构体定义放在**块注释**里：
+
+```cpp
+/**
+ * Definition for a binary tree node.
+ * struct TreeNode { ... };
+ */
+class Solution {
+public:
+    int maxDepth(TreeNode* root) {   // ← clangd 看不到注释，这里就报 Unknown type name 'TreeNode'
+```
+
+链表题是 `ListNode`、克隆图/随机链表是 `Node`、嵌套列表是 `NestedInteger`，套路一样。
+
+本配置用 `solutions/lc-stubs.h`（自动生成）通过 `.clangd` 里的 `-include` 强制喂给 clangd：
+只影响本地静态分析，**不进你的解答文件、也不影响判题**（判题器自己带着这些定义）。
+已覆盖 `TreeNode` / `ListNode` / `Node` / `NestedInteger` / `Employee`；
+碰到别的题目类型，直接往 `lc-stubs.h` 里照着加一个即可。
+
+> 真正的错误不会被屏蔽：类型名写错（比如 `vecotr`）照旧会报错提示。
 
 ## 依赖
 
