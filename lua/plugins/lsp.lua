@@ -102,7 +102,12 @@ local function parse_rust_diagnostics(json_lines, file, tool)
   for _, line in ipairs(json_lines) do
     local ok, msg = pcall(vim.json.decode, line)
     if ok and type(msg) == "table" and msg["$message_type"] == "diagnostic" then
-      -- 末尾那条 "N warnings emitted" 汇总没有 span，跳过
+      local code = msg.code
+      if type(code) == "table" then
+        code = code.code
+      end
+
+      -- 找落在本文件上的 span（优先 primary）
       local span
       for _, s in ipairs(msg.spans or {}) do
         if s.is_primary and s.file_name == file then
@@ -120,11 +125,6 @@ local function parse_rust_diagnostics(json_lines, file, tool)
       end
 
       if span then
-        local code = msg.code
-        if type(code) == "table" then
-          code = code.code
-        end
-
         local parts = { msg.message }
         local fixes = {}
         for _, child in ipairs(msg.children or {}) do
@@ -166,11 +166,42 @@ local function parse_rust_diagnostics(json_lines, file, tool)
           source = tool == "clippy-driver" and "clippy" or "rustc",
           user_data = { fixes = fixes },
         }
+      elseif msg.level == "error" and not (msg.message or ""):match("^aborting due to") then
+        -- 有些 error 根本没 span（例如文件名不合法这类在类型检查之前就中止的错）。
+        -- 以前这里一律丢掉，结果就是“明明编译不过，诊断列表却是空的”——静默失败。
+        -- 现在挂到第 1 行，宁可位置不准也不能不显示；“aborting due to …”汇总行照旧忽略。
+        diagnostics[#diagnostics + 1] = {
+          lnum = 0,
+          col = 0,
+          end_lnum = 0,
+          end_col = 0,
+          severity = vim.diagnostic.severity.ERROR,
+          message = (msg.message or "编译器整体报错")
+            .. "\n（编译器整体报的错，没有具体行号，所以显示在第 1 行）",
+          code = code,
+          source = tool == "clippy-driver" and "clippy" or "rustc",
+          user_data = { fixes = {} },
+        }
       end
     end
   end
 
   return diagnostics
+end
+
+--- 力扣的解答文件名一定带点（`617.merge-two-binary-trees.rs`），rustc 会拿它当 crate 名，
+--- 推出 `617.merge_two_binary_trees` 这种非法标识符，于是在**类型检查之前**就中止，
+--- 真正的错误一个也报不出来（症状：编译不过但诊断是空的）。
+--- 这里自己造一个合法、且各文件唯一的 crate 名。
+---@param file string
+---@return string
+local function rust_crate_name(file)
+  -- :t:r = 去掉目录和 .rs 后缀
+  local name = vim.fn.fnamemodify(file, ":t:r"):gsub("[^%w_]", "_")
+  if name:match("^%d") then
+    name = "c_" .. name -- crate 名不能以数字开头
+  end
+  return name
 end
 
 ---@param bufnr integer
@@ -187,6 +218,8 @@ local function rust_check(bufnr)
   vim.system({
     tool,
     "--edition=2021",
+    "--crate-name",
+    rust_crate_name(file), -- 不传它的话文件名里的点会让编译在类型检查前就中止（见上）
     "--crate-type=lib", -- 单文件解答没有 main，按 lib 编译
     "--emit=metadata",
     "--error-format=json",
@@ -355,6 +388,29 @@ return {
         end,
       })
 
+      -- Rust 本地检查（clippy 优先）本身不需要 LSP，所以不能挂在 LspAttach 上：
+      -- rust-analyzer 没起来（缺组件、启动失败）时，以前打开 .rs 根本不会检查，
+      -- 连 <leader>lC / <leader>lF 都不会注册。这里改成看文件类型。
+      vim.api.nvim_create_autocmd("FileType", {
+        pattern = "rust",
+        callback = function(args)
+          if not is_solution(args.buf) then
+            return
+          end
+          local map = function(lhs, rhs, desc)
+            vim.keymap.set("n", lhs, rhs, { buffer = args.buf, desc = desc })
+          end
+          map("<leader>lC", function()
+            rust_check(args.buf)
+          end, "本地 clippy/编译检查")
+          map("<leader>lF", function()
+            rust_apply_fix(args.buf)
+          end, "应用 clippy 建议（当前行）")
+          -- 打开就先查一次
+          rust_check(args.buf)
+        end,
+      })
+
       vim.diagnostic.config({
         virtual_text = true,
         severity_sort = true,
@@ -383,17 +439,6 @@ return {
           map("n", "[d", function()
             vim.diagnostic.jump({ count = -1 })
           end, "上一个诊断")
-
-          if vim.bo[ev.buf].filetype == "rust" then
-            -- 打开就先查一次，然后保存时自动查（clippy 优先于 rustc）
-            map("n", "<leader>lC", function()
-              rust_check(ev.buf)
-            end, "本地 clippy/编译检查")
-            map("n", "<leader>lF", function()
-              rust_apply_fix(ev.buf)
-            end, "应用 clippy 建议（当前行）")
-            rust_check(ev.buf)
-          end
 
           -- 保存时自动格式化：
           --   C/C++ → clangd 内置 clang-format，风格读 .clang-format（LLVM）
