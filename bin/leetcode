@@ -1,24 +1,105 @@
 #!/bin/sh
 # LeetCode 专用 Neovim 启动器（Linux / macOS / WSL）
 #
-# 用法：leetcode
-#   等价于：NVIM_APPNAME=leetcode nvim leetcode.nvim
-#   （`leetcode.nvim` 这个“文件参数”是插件用来判断自己是否处于刷题模式的入口，
-#     别去掉；额外参数请写在前面，例如 `leetcode -c "set nu"`，
-#     这样 nvim 的最后一个参数始终是 leetcode.nvim。）
+# 和 Windows 的 bin/leetcode.ps1 **行为一致**：
+#   1. NVIM_APPNAME=leetcode
+#   2. 确保 nvim 的配置目录真的指向本仓库
+#      （$XDG_CONFIG_HOME/leetcode，默认 ~/.config/leetcode）：
+#        * 不存在 → 自动建一个指向本仓库的符号链接
+#        * 指向别处 → 只警告、不覆盖（否则会悄悄用别人的配置，
+#          看起来就像本仓库没生效）
+#   3. exec nvim <你给的参数...> leetcode.nvim
+#      （最后一个参数固定是 leetcode.nvim，插件靠它判断自己处于刷题模式）
 #
-# 配置目录（本仓库）应该放在：
-#   Linux/macOS: $XDG_CONFIG_HOME/leetcode，或默认的 ~/.config/leetcode
-#   也就是 NVIM_APPNAME=leetcode 时的 stdpath("config")
+# 用法：
+#   leetcode                 打开力扣面板
+#   leetcode -c "set nu"     额外参数写在前面，nvim 的最后一个参数永远是 leetcode.nvim
 #
-# 安装（二选一）：
-#   1) 放进 PATH：install -Dm755 bin/leetcode ~/.local/bin/leetcode
-#   2) 不用脚本，在 shell 启动文件里写别名：
-#      alias leetcode='NVIM_APPNAME=leetcode nvim leetcode.nvim'
+# 安装：本仓库可以放在任何地方，只要把 bin 加进 PATH，例如
+#   echo 'export PATH="$HOME/.config/leetcode/bin:$PATH"' >> ~/.bashrc
+# 或者软链到一个已经在 PATH 里的目录：
+#   ln -sf ~/.config/leetcode/bin/leetcode ~/.local/bin/leetcode
 #
-# 依赖：nvim(>=0.10)、git、clangd、g++、tree-sitter-cli、curl
-#       Rust 另需 rustup 组件：rust-analyzer、clippy
+# 环境变量：
+#   LEETCODE_SKIP_MASON=1    不把主配置（LazyVim）mason 里的 bin 追加进 PATH
+#
+# 依赖：nvim(>=0.10)、git、clangd、g++、tree-sitter-cli、curl；Rust 另需 rustup 组件。
 set -eu
+
+warn() {
+  printf 'leetcode: %s\n' "$*" >&2
+}
+
+# ── 本仓库根目录（解析符号链接：bin/leetcode → 仓库根） ─────────────────────
+self=$0
+case $self in
+  */*) ;;
+  # 只给了命令名（少见）：从 PATH 里找出真实路径
+  *) self=$(command -v "$self" 2>/dev/null || printf '%s' "$self") ;;
+esac
+while [ -L "$self" ]; do
+  dir=$(cd -P "$(dirname "$self")" && pwd)
+  self=$(readlink "$self")
+  case $self in
+    /*) ;;
+    *) self=$dir/$self ;;
+  esac
+done
+repo=$(cd -P "$(dirname "$self")/.." && pwd)
+
+# ── 配置目录：保证 nvim 读到的就是本仓库 ────────────────────────────────────
+# 算法和 nvim 的 stdpath("config") 一致：XDG_CONFIG_HOME 优先，否则 ~/.config
+if [ -n "${XDG_CONFIG_HOME:-}" ]; then
+  config=$XDG_CONFIG_HOME/leetcode
+else
+  config=$HOME/.config/leetcode
+fi
+
+current=
+if [ -d "$config" ]; then
+  current=$(cd -P "$config" 2>/dev/null && pwd) || current=
+fi
+
+if [ "$current" != "$repo" ]; then
+  if [ -e "$config" ] || [ -L "$config" ]; then
+    warn "配置目录不是本仓库：
+  nvim 会用      $config
+  本仓库在       $repo
+  也就是说本仓库的配置不会生效。想用它：删掉/改名上面那个目录（或把它改成指向本仓库的
+  符号链接），或者直接运行 $repo/bin/leetcode"
+  else
+    mkdir -p "$(dirname "$config")"
+    if ! ln -s "$repo" "$config" 2>/dev/null; then
+      warn "无法建立符号链接：$config -> $repo（权限或文件系统不支持）。
+  请手工建链接，或直接用 $repo/bin/leetcode 启动。"
+    elif [ ! -L "$config" ]; then
+      # MSYS/Git-Bash 之类不支持符号链接的环境会把目录整个复制过去 —— 明确提示
+      warn "当前环境不支持符号链接，$repo 被复制到了 $config。
+  Git-Bash / MSYS 里请改用 PowerShell 版：$repo/bin/leetcode.ps1，
+  或手工建链接（Windows 上普通用户可以用目录联接：mklink /J）。"
+    else
+      warn "已把 $config 链接到 $repo"
+    fi
+  fi
+fi
+
+# ── 主配置（LazyVim）mason 里的 tree-sitter CLI：本机没单独装就用它 ─────────
+# 追加到 PATH 末尾，避免抢在系统 clangd 前面（否则 leetcode 用的 clangd 会变）。
+if [ -z "${LEETCODE_SKIP_MASON:-}" ]; then
+  mason_bin=${XDG_DATA_HOME:-$HOME/.local/share}/nvim/mason/bin
+  if [ -d "$mason_bin" ]; then
+    case ":${PATH}:" in
+      *":$mason_bin:"*) ;;
+      *) PATH=$PATH:$mason_bin ;;
+    esac
+  fi
+  export PATH
+fi
+
+if ! command -v nvim >/dev/null 2>&1; then
+  warn '找不到 nvim。请先安装 Neovim (>=0.10) 并加入 PATH。'
+  exit 127
+fi
 
 export NVIM_APPNAME=leetcode
 exec nvim "$@" leetcode.nvim

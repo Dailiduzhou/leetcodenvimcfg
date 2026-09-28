@@ -4,6 +4,7 @@
 # 二进制文件由 text=auto 自动识别，不会被改。
 * text=auto eol=lf
 
-# 启动脚本在 Linux/macOS/WSL 下要能直接执行
-bin/leetcode text eol=lf
+# 启动脚本在 Linux/macOS/WSL 下要能直接执行，换行必须是 LF
+bin/leetcode    text eol=lf
+bin/leetcode.ps1 text eol=lf
 *.sh         text eol=lf

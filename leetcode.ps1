@@ -1,29 +1,12 @@
-function global:Start-LeetCode {
-    # 新配置：配置目录 = 本仓库（%LOCALAPPDATA%\leetcode 是指向这里的 junction）
-    #           数据目录 = %LOCALAPPDATA%\leetcode-data（插件、解答在 solutions）
-    $hadAppName = Test-Path Env:NVIM_APPNAME
-    $previousAppName = [Environment]::GetEnvironmentVariable('NVIM_APPNAME', 'Process')
-    try {
-        $env:NVIM_APPNAME = 'leetcode'
+﻿# 兼容用的入口：给老的 $PROFILE 写法留着 ——
+#   . "$env:LOCALAPPDATA\leetcode\leetcode.ps1"
+# 之后就有 leetcode / Start-LeetCode 命令。
+#
+# 真正的实现在 bin/leetcode.ps1（和 Linux/macOS 的 bin/leetcode 对称）。
+# 新装建议直接用 bin 里的那个（把 <仓库>\bin 加进 PATH），见 README。
+. "$PSScriptRoot/bin/leetcode.ps1"
 
-        # nvim-treesitter 装/更新 parser 需要 tree-sitter CLI，本机没有独立安装，
-        # 用主配置 mason 里已有的那份。追加到 PATH 末尾，避免抢在 scoop 的 clangd 前面
-        # （否则 leetcode 用的 clangd 会在 22.1.6 / mason 23.1.0 之间悄悄变化）。
-        $masonBin = "$env:LOCALAPPDATA\nvim-data\mason\bin"
-        if ((Test-Path $masonBin) -and ($env:PATH -notlike "*$masonBin*")) {
-            $env:PATH = "$env:PATH;$masonBin"
-        }
-
-        & nvim @args leetcode.nvim
-    }
-    finally {
-        if ($hadAppName) {
-            $env:NVIM_APPNAME = $previousAppName
-        }
-        else {
-            Remove-Item Env:NVIM_APPNAME -ErrorAction SilentlyContinue
-        }
-    }
+# 万一这个文件被当成脚本执行（而不是 dot-source），把参数转交过去正常启动。
+if ($MyInvocation.InvocationName -ne '.') {
+    Start-LeetCode @args
 }
-
-Set-Alias -Name leetcode -Value Start-LeetCode -Scope Global

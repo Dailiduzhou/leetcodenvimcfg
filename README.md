@@ -4,33 +4,61 @@
 
 ## 安装
 
-**Linux / macOS / WSL**：配置目录就是本仓库，放在 `stdpath("config")` 对应位置：
+两个平台是同一套逻辑：**仓库放哪都行**，只要把仓库的 `bin` 加进 PATH；
+启动器第一次运行时会自动把 nvim 的配置目录链到本仓库
+（Linux/macOS 建符号链接，Windows 建目录联接，都不需要管理员），之后 nvim 读到的
+就是这份配置，改仓库就是改配置。
+
+### Linux / macOS / WSL
 
 ```sh
-git clone <this-repo> ~/.config/leetcode          # NVIM_APPNAME=leetcode 的配置目录
-install -Dm755 ~/.config/leetcode/bin/leetcode ~/.local/bin/leetcode
-leetcode                                          # 首次启动会自动装插件
+git clone <this-repo> ~/code/leetcodenvimcfg
+echo 'export PATH="$HOME/code/leetcodenvimcfg/bin:$PATH"' >> ~/.bashrc   # 换成你的 shell 的 rc
+leetcode                                                                 # 首次启动会自动装插件
 ```
 
-不想装脚本就写个别名（等价）：
+`bin/leetcode` 会确保 `$XDG_CONFIG_HOME/leetcode`（默认 `~/.config/leetcode`）
+指向本仓库，和 nvim 的 `stdpath("config")` 算法一致；不想自动建就自己来：
 
 ```sh
-alias leetcode='NVIM_APPNAME=leetcode nvim leetcode.nvim'
+ln -s ~/code/leetcodenvimcfg ~/.config/leetcode
 ```
 
-**Windows**：配置目录是 `%LOCALAPPDATA%\leetcode`。把仓库放到那里（或做个目录联接），
-然后用仓库里的 `leetcode.ps1` 做启动器：
+### Windows（PowerShell / pwsh）
 
 ```powershell
-# 目录联接（普通用户就能建，仓库就是活配置；不必管理员）
-mklink /J "%LOCALAPPDATA%\leetcode" "<仓库路径>"
-
-# 在 $PROFILE 里 dot-source 一次，之后 leetcode 直接启动
-. "$env:LOCALAPPDATA\leetcode\leetcode.ps1"
+git clone <this-repo> $env:USERPROFILE\code\leetcodenvimcfg
+# 把 <仓库>\bin 加进 PATH；写进 $PROFILE 就永久生效
+$env:PATH = "$env:USERPROFILE\code\leetcodenvimcfg\bin;$env:PATH"
+leetcode
 ```
+
+`bin/leetcode.ps1` 会确保 `%LOCALAPPDATA%\leetcode`（设了 `$env:XDG_CONFIG_HOME` 就用它）
+是指向本仓库的目录联接。在 Git-Bash / MSYS 里请用这个 PowerShell 版，别用 `bin/leetcode`。
+
+老写法（`$PROFILE` 里 dot-source）继续可用，之后 `leetcode` 同样是命令：
+
+```powershell
+. "$env:LOCALAPPDATA\leetcode\leetcode.ps1"   # 现在只是转发到 bin/leetcode.ps1
+```
+
+### 两个启动器的约定（一样）
+
+`leetcode [额外参数...]` 做的事：
+
+1. `NVIM_APPNAME=leetcode`
+2. 确保配置目录指向本仓库（见上）
+3. `nvim <额外参数...> leetcode.nvim` —— 额外参数写在前面，最后一个参数
+   永远是 `leetcode.nvim`（插件靠它判断自己处于刷题模式，别去掉）
+
+如果配置目录**已存在但不是本仓库**，启动器只警告、不覆盖，避免悄悄用了别的配置
+（那正是"改了这个仓库却没生效"的典型症状）。
 
 两边都是 `NVIM_APPNAME=leetcode`，所以数据目录分别在 `~/.local/share/leetcode`
 与 `%LOCALAPPDATA%\leetcode-data`，和主配置（LazyVim）互不影响。
+
+> 环境变量 `LEETCODE_SKIP_MASON=1`：不把主配置（LazyVim）mason 里的 `bin`
+> 追加进 PATH（默认追加，用来借它的 `tree-sitter` CLI 装 parser）。
 
 ## 使用
 
@@ -48,9 +76,10 @@ Linux 是 `~/.cache/leetcode/`，Windows 是 `%LOCALAPPDATA%\Temp\leetcode\`，
 | 路径 | 说明 |
 | --- | --- |
 | `~/.config/leetcode` | 本仓库（配置，就是这里） |
-| `~/.local/share/leetcode` | 插件、treesitter parser |
+| `bin/leetcode`、`bin/leetcode.ps1` | 启动器（Linux/macOS/WSL 与 Windows，行为一致） |
+| `~/.local/share/leetcode` | 插件、treesitter parser（Windows 上是 `%LOCALAPPDATA%\leetcode-data`） |
 | `~/.local/share/leetcode/solutions` | 解答文件（`1.two-sum.cpp` / `1.two-sum.rs`）+ 自动生成的 `.clangd` / `.clang-format` / `.rustfmt.toml` / `lc-stubs.h` / `lc-stubs.rs` / `rust-project.json` |
-| `~/.cache/leetcode` | cookie、题库缓存 |
+| `~/.cache/leetcode` | cookie、题库缓存（Windows 上是 `%LOCALAPPDATA%\Temp\leetcode`） |
 
 ## 快捷键
 
