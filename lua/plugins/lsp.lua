@@ -1,10 +1,78 @@
+local SOLUTIONS = require("lc").solutions
+
+--- rust-analyzer 在"散落单文件"模式下没有项目描述，补全/诊断基本不可用
+--- （见 leetcode.nvim issue #86）。这里生成一份 rust-project.json，
+--- 把解答目录里每个 .rs 都登记成一个 crate root。
+--- 内容有变化才写，避免 rust-analyzer 反复 reload。
+local function ensure_rust_project()
+  local files = vim.fn.globpath(SOLUTIONS, "*.rs", false, true)
+  if #files == 0 then
+    return
+  end
+  -- lc-stubs.rs 是注入用的类型桩，不是题目解答，不要当成 crate
+  files = vim.tbl_filter(function(f)
+    return vim.fn.fnamemodify(f, ":t") ~= "lc-stubs.rs"
+  end, files)
+  table.sort(files)
+  if #files == 0 then
+    return
+  end
+
+  local crates = {}
+  for _, f in ipairs(files) do
+    crates[#crates + 1] = { root_module = f, edition = "2021", deps = {} }
+  end
+
+  local sysroot = vim.fn.system({ "rustc", "--print", "sysroot" }):gsub("%s+$", "")
+  local library = sysroot .. "/lib/rustlib/src/rust/library"
+
+  local project = { crates = crates }
+  if vim.fn.isdirectory(library) == 1 then
+    project.sysroot_src = library -- 需要 rust-src 组件；没装就不写这一项
+  end
+
+  local path = SOLUTIONS .. "/rust-project.json"
+  local content = vim.json.encode(project)
+  local ok, old = pcall(vim.fn.readfile, path)
+  if not ok or table.concat(old, "") ~= content then
+    vim.fn.writefile({ content }, path)
+  end
+end
+
+--- 用 clangd / rust-analyzer 格式化（只有这两个客户端参与）
+---@param bufnr? integer
+---@param async? boolean
+local function format(bufnr, async)
+  -- 注意：nvim 0.11+ 的 lspconfig 里 rust-analyzer 的 server 名是 rust_analyzer（下划线）
+  local enabled = { clangd = true, rust_analyzer = true }
+  local attached = false
+  for _, c in ipairs(vim.lsp.get_clients({ bufnr = bufnr })) do
+    if enabled[c.name] then
+      attached = true
+    end
+  end
+  if not attached then
+    return
+  end
+
+  vim.lsp.buf.format({
+    bufnr = bufnr,
+    async = async ~= false,
+    timeout_ms = 3000,
+    filter = function(client)
+      return enabled[client.name] == true
+    end,
+  })
+end
+
 return {
   {
     "neovim/nvim-lspconfig",
     event = { "BufReadPre", "BufNewFile" },
     config = function()
+      -- ── C / C++：clangd ────────────────────────────────────────────────────
       -- 力扣的解答是磁盘上平铺的单文件，没有 compile_commands.json，
-      -- 编译参数由解答目录里的 .clangd 提供（lua/plugins/leetcode.lua 会生成/维护它）
+      -- 编译参数由解答目录里的 .clangd 提供（lua/plugins/leetcode.lua 生成/维护）
       vim.lsp.config("clangd", {
         cmd = {
           "clangd",
@@ -21,28 +89,40 @@ return {
       })
       vim.lsp.enable("clangd")
 
+      -- ── Rust：rust-analyzer ───────────────────────────────────────────────
+      -- 名字是 rust_analyzer（下划线），不是 rust-analyzer，写错会报 "cmd got nil"
+      ensure_rust_project()
+      vim.lsp.config("rust_analyzer", {
+        -- 解答目录本身就是"工作区根"，rust-project.json 就在里面
+        root_dir = SOLUTIONS,
+        capabilities = require("blink.cmp").get_lsp_capabilities(),
+        settings = {
+          ["rust-analyzer"] = {
+            -- 没有 Cargo 工程，别去跑 cargo check
+            checkOnSave = false,
+            -- 明确指向生成的工程描述（每个 .rs 各自是一个 crate root）
+            linkedProjects = { SOLUTIONS .. "/rust-project.json" },
+            diagnostics = { enable = true, experimental = { enable = false } },
+          },
+        },
+      })
+      vim.lsp.enable("rust_analyzer")
+
+      -- 新题目会新建 .rs，把新 crate 登记进去（内容变了 rust-analyzer 会自己 reload）
+      vim.api.nvim_create_autocmd({ "BufNewFile", "BufReadPre" }, {
+        pattern = "*.rs",
+        callback = function()
+          if vim.startswith(vim.api.nvim_buf_get_name(0), SOLUTIONS .. "/") then
+            ensure_rust_project()
+          end
+        end,
+      })
+
       vim.diagnostic.config({
         virtual_text = true,
         severity_sort = true,
         float = { border = "rounded" },
       })
-
-      --- 用 clangd 格式化（只有 clangd 参与，风格读 .clang-format / --fallback-style）
-      ---@param bufnr? integer
-      ---@param async? boolean
-      local function format(bufnr, async)
-        if #vim.lsp.get_clients({ bufnr = bufnr, name = "clangd" }) == 0 then
-          return
-        end
-        vim.lsp.buf.format({
-          bufnr = bufnr,
-          async = async ~= false,
-          timeout_ms = 3000,
-          filter = function(client)
-            return client.name == "clangd"
-          end,
-        })
-      end
 
       -- 常用 LSP 快捷键（which-key 里显示在 <leader>c 分组下）
       vim.api.nvim_create_autocmd("LspAttach", {
@@ -59,7 +139,7 @@ return {
           map("n", "<leader>cd", vim.diagnostic.open_float, "诊断详情")
           map({ "n", "v" }, "<leader>cf", function()
             format(ev.buf)
-          end, "格式化（clangd，LLVM 风格）")
+          end, "格式化（clangd / rust-analyzer）")
           map("n", "]d", function()
             vim.diagnostic.jump({ count = 1 })
           end, "下一个诊断")
@@ -67,14 +147,15 @@ return {
             vim.diagnostic.jump({ count = -1 })
           end, "上一个诊断")
 
-          -- 保存时自动格式化：走 clangd 内置的 clang-format，
-          -- 风格读解答目录里的 .clang-format（BasedOnStyle: LLVM）。
+          -- 保存时自动格式化：
+          --   C/C++ → clangd 内置 clang-format，风格读 .clang-format（LLVM）
+          --   Rust  → rust-analyzer 调 rustfmt，风格读 .rustfmt.toml
           -- 不想要自动格式化就删掉这个 autocmd。
-          if vim.tbl_contains({ "c", "cpp" }, vim.bo[ev.buf].filetype) then
+          if vim.tbl_contains({ "c", "cpp", "rust" }, vim.bo[ev.buf].filetype) then
             vim.api.nvim_create_autocmd("BufWritePre", {
               buffer = ev.buf,
               group = vim.api.nvim_create_augroup("leetcode_format_on_save", { clear = false }),
-              desc = "保存时用 clangd 格式化（LLVM）",
+              desc = "保存时自动格式化",
               callback = function(args)
                 format(args.buf, false)
               end,
@@ -85,7 +166,7 @@ return {
     end,
   },
 
-  -- C++ 补全 / 签名提示
+  -- C++ / Rust 补全、签名提示
   {
     "saghen/blink.cmp",
     version = "1.*",
