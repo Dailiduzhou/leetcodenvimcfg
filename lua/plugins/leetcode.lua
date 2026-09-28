@@ -1,7 +1,7 @@
--- 力扣本体：中国站 + C/C++ + 解答窗口快捷键 + clangd 配置
+-- 力扣本体：中国站 + C/C++ + 快捷键 + clangd / clang-format 配置
 local LEET_ARG = "leetcode.nvim"
 
--- 解答文件存放目录（.clangd 也放在这一层）
+-- 解答文件存放目录（.clangd / .clang-format 也放在这一层）
 local SOLUTIONS = vim.fn.stdpath("data") .. "/solutions"
 
 -- clangd 配置：力扣的解答是单文件、没有 compile_commands.json，
@@ -15,10 +15,11 @@ CompileFlags:
   Add:
     # 力扣判题器若不支持 C++20，把下面这行改成 -std=c++17
     - -std=c++20
-    # 力扣的代码本来就是"半成品"（没有 main、形参经常用不到），这类警告是噪音
+    # 力扣的代码本来就是"半成品"（没有 main、形参经常用不到、函数体还空着），这类警告是噪音
     - -Wno-unused-parameter
     - -Wno-unused-variable
     - -Wno-sign-compare
+    - -Wno-return-type
 Completion:
   ArgumentLists: FullPlaceholders
 Index:
@@ -26,28 +27,37 @@ Index:
   Background: Skip
 ]]
 
---- 保证 clangd 配置存在（已存在则不动，方便你自己改）
-local function ensure_clangd_config()
-  local path = SOLUTIONS .. "/.clangd"
+-- clang-format 风格：clangd 内置的格式化器（保存时格式化用的就是它）会读这个文件
+local CLANG_FORMAT = [[
+# 由 ~/.config/leetcode/lua/plugins/leetcode.lua 生成
+# 文件被删掉的话，下次打开力扣会自动重建；你手动改过的内容不会被覆盖
+BasedOnStyle: LLVM
+
+# 下面两条按需打开：
+# 力扣模板默认是 4 空格缩进
+# IndentWidth: 4
+# LLVM 默认 80 列换行，嫌太窄可以放宽
+# ColumnLimit: 120
+]]
+
+--- 文件不存在才写（已存在就不动，方便你自己改）
+local function ensure_file(path, content)
   if vim.uv.fs_stat(path) then
     return
   end
-  vim.fn.mkdir(SOLUTIONS, "p")
-  vim.fn.writefile(vim.split(CLANGD_CONFIG, "\n"), path)
+  vim.fn.mkdir(vim.fn.fnamemodify(path, ":h"), "p")
+  vim.fn.writefile(vim.split(content, "\n"), path)
 end
 
---- 题目窗口的快捷键（which-key 显示为 "leetcode" 分组）
----@param q lc.ui.Question
-local function question_keymaps(q)
-  local bufnr = q.bufnr
-  if not (bufnr and vim.api.nvim_buf_is_valid(bufnr)) then
-    return
+--- 力扣快捷键。
+--- 设成全局映射（而不是只挂在题目 buffer 上），
+--- 这样在面板、题面、控制台任何 buffer 里 which-key 的 <leader>l 分组都看得到。
+local function setup_keymaps()
+  local map = function(lhs, rhs, desc)
+    vim.keymap.set("n", lhs, rhs, { desc = desc, silent = true })
   end
 
-  local function map(lhs, rhs, desc)
-    vim.keymap.set("n", lhs, rhs, { buffer = bufnr, desc = desc, silent = true })
-  end
-
+  map("<leader>l", "<cmd>Leet<cr>", "力扣主菜单")
   map("<leader>ll", "<cmd>Leet list<cr>", "题库列表")
   map("<leader>lr", "<cmd>Leet run<cr>", "运行（测试用例）")
   map("<leader>ls", "<cmd>Leet submit<cr>", "提交")
@@ -61,7 +71,6 @@ local function question_keymaps(q)
   map("<leader>lo", "<cmd>Leet open<cr>", "在浏览器里打开")
   map("<leader>lb", "<cmd>Leet last_submit<cr>", "取回上次提交的代码")
   map("<leader>lS", "<cmd>Leet reset<cr>", "重置为默认代码模板")
-  map("<leader>lm", "<cmd>Leet<cr>", "回到主菜单")
   map("<leader>lq", "<cmd>Leet exit<cr>", "退出力扣")
 end
 
@@ -77,6 +86,14 @@ return {
     "MunifTanjim/nui.nvim",
     "nvim-telescope/telescope.nvim",
   },
+
+  -- 启动就注册好：快捷键 + clangd / clang-format 配置
+  -- （放在 init 而不是 config，这样即使插件因为某些原因没加载，clangd 也是好的）
+  init = function()
+    setup_keymaps()
+    ensure_file(SOLUTIONS .. "/.clangd", CLANGD_CONFIG)
+    ensure_file(SOLUTIONS .. "/.clang-format", CLANG_FORMAT)
+  end,
 
   opts = {
     arg = LEET_ARG,
@@ -102,14 +119,5 @@ return {
       reset_previous_code = false, -- 重开做过的题时不要用模板覆盖上次的代码
       fold_imports = false, -- 不要把 #include 折起来
     },
-
-    hooks = {
-      question_enter = { question_keymaps },
-    },
   },
-
-  config = function(_, opts)
-    ensure_clangd_config()
-    require("leetcode").setup(opts)
-  end,
 }

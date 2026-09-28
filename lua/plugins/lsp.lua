@@ -27,6 +27,23 @@ return {
         float = { border = "rounded" },
       })
 
+      --- 用 clangd 格式化（只有 clangd 参与，风格读 .clang-format / --fallback-style）
+      ---@param bufnr? integer
+      ---@param async? boolean
+      local function format(bufnr, async)
+        if #vim.lsp.get_clients({ bufnr = bufnr, name = "clangd" }) == 0 then
+          return
+        end
+        vim.lsp.buf.format({
+          bufnr = bufnr,
+          async = async ~= false,
+          timeout_ms = 3000,
+          filter = function(client)
+            return client.name == "clangd"
+          end,
+        })
+      end
+
       -- 常用 LSP 快捷键（which-key 里显示在 <leader>c 分组下）
       vim.api.nvim_create_autocmd("LspAttach", {
         callback = function(ev)
@@ -41,14 +58,28 @@ return {
           map("n", "<leader>ca", vim.lsp.buf.code_action, "代码操作")
           map("n", "<leader>cd", vim.diagnostic.open_float, "诊断详情")
           map({ "n", "v" }, "<leader>cf", function()
-            vim.lsp.buf.format({ async = true })
-          end, "格式化（clangd）")
+            format(ev.buf)
+          end, "格式化（clangd，LLVM 风格）")
           map("n", "]d", function()
             vim.diagnostic.jump({ count = 1 })
           end, "下一个诊断")
           map("n", "[d", function()
             vim.diagnostic.jump({ count = -1 })
           end, "上一个诊断")
+
+          -- 保存时自动格式化：走 clangd 内置的 clang-format，
+          -- 风格读解答目录里的 .clang-format（BasedOnStyle: LLVM）。
+          -- 不想要自动格式化就删掉这个 autocmd。
+          if vim.tbl_contains({ "c", "cpp" }, vim.bo[ev.buf].filetype) then
+            vim.api.nvim_create_autocmd("BufWritePre", {
+              buffer = ev.buf,
+              group = vim.api.nvim_create_augroup("leetcode_format_on_save", { clear = false }),
+              desc = "保存时用 clangd 格式化（LLVM）",
+              callback = function(args)
+                format(args.buf, false)
+              end,
+            })
+          end
         end,
       })
     end,
