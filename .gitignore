@@ -1,0 +1,11 @@
+# lazy.nvim 运行/生成的临时文件
+*.log
+doc/tags
+debug
+.repro
+tt.*
+.tests
+
+# 注意：这里**不**忽略 lazy-lock.json
+# 它锁定插件版本，换机器时能复现同一套环境。不想跟踪就取消下一行注释。
+# lazy-lock.json
