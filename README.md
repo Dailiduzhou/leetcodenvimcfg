@@ -31,7 +31,7 @@ which-key 都能看到）：
 `lj` 重新注入类型桩 · `lq` 退出
 
 LSP：`gd` 定义 · `gr` 引用 · `K` 悬停 · `<space>cr` 重命名 · `<space>ca` 代码操作 ·
-`<space>cf` 手动格式化 · `]d`/`[d` 跳诊断
+`<space>cf` 手动格式化 · `]d`/`[d` 跳诊断 · `<space>lC` 本地 rustc 编译检查（Rust）
 
 其它：`<C-s>` 保存 · `<Esc>` 清搜索高亮 · `<space>qq` 退出
 
@@ -75,6 +75,18 @@ rust-analyzer 在“散落的单文件”模式下没有项目描述，补全和
 
 **格式化**：保存时由 rust-analyzer 调 rustfmt，风格读 `solutions/.rustfmt.toml`；
 手动格式化是 `<space>cf`。
+
+**编译检查（本地就能看到判题器会报什么）**
+
+rust-analyzer 不是编译器：像 `Option::cloned(...)` 歧义（E0034）、`.cloned()` 不存在（E0599）、
+函数忘了写 `Self::`（E0425）这类错它不一定报得出来，于是就出现“本地安静、一提交判题器一堆错”。
+
+所以本配置在**打开 / 保存 `.rs`** 时会直接用 rustc 编译一遍
+（`rustc --edition=2021 --crate-type=lib --emit=metadata`），把诊断按判题器的行列号贴进 buffer
+（source 显示为 `rustc`）；手动触发是 `<leader>lC`。
+
+> 另外注意：rustc 在类型检查出错后会**停止检查该函数的剩余部分**，所以修完一批错可能又冒出
+> 新的（比如 E0382 moved value）——属正常，继续修就行。
 
 **提醒**：力扣中国站并不是每道题都提供 Rust（例如 133 克隆图、138 随机链表的复制就没有）。
 `<leader>lu` 的语言列表里能选到的才是当前题目支持的。

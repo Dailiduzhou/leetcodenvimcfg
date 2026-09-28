@@ -65,6 +65,67 @@ local function format(bufnr, async)
   })
 end
 
+--- 本地 rustc 编译检查。
+--- rust-analyzer 不是编译器：像 `Option::cloned(...)` 歧义、`.cloned()` 不存在、
+--- 函数没导入这类错误它不一定报，结果就是本地安静、一提交判题器一堆错。
+--- 所以这里直接调 rustc 编译一遍，诊断格式和判题器基本一致。
+local rustc_ns = vim.api.nvim_create_namespace("leetcode_rustc")
+
+---@param bufnr integer
+local function rustc_check(bufnr)
+  local file = vim.api.nvim_buf_get_name(bufnr)
+  if not vim.startswith(file, SOLUTIONS .. "/") or vim.fn.filereadable(file) == 0 then
+    return
+  end
+
+  local outdir = vim.fn.stdpath("cache") .. "/rustc-check"
+  vim.fn.mkdir(outdir, "p")
+
+  vim.system({
+    "rustc",
+    "--edition=2021",
+    "--crate-type=lib", -- 单文件解答没有 main，按 lib 编译
+    "--emit=metadata",
+    "--error-format=json",
+    "--out-dir",
+    outdir,
+    file,
+  }, { text = true }, function(out)
+    local diagnostics = {}
+    -- 注意：rustc 的诊断输出在 **stderr**（不是 stdout）
+    for line in vim.gsplit((out.stderr or "") .. (out.stdout or ""), "\n", { trimempty = true }) do
+      local ok, msg = pcall(vim.json.decode, line)
+      if ok and type(msg) == "table" and msg["$message_type"] == "diagnostic" and msg.level == "error" then
+        local span = nil
+        for _, s in ipairs(msg.spans or {}) do
+          if s.is_primary and s.file_name == file then
+            span = s
+            break
+          end
+        end
+        if span then
+          local start_line, start_col = span.line_start or 1, span.column_start or 1
+          diagnostics[#diagnostics + 1] = {
+            lnum = start_line - 1,
+            col = start_col - 1,
+            end_lnum = (span.line_end or start_line) - 1,
+            end_col = (span.column_end or start_col) - 1,
+            severity = vim.diagnostic.severity.ERROR,
+            message = msg.message .. ((msg.code and msg.code.code) and (" [" .. msg.code.code .. "]") or ""),
+            source = "rustc",
+          }
+        end
+      end
+    end
+
+    vim.schedule(function()
+      if vim.api.nvim_buf_is_valid(bufnr) then
+        vim.diagnostic.set(rustc_ns, bufnr, diagnostics)
+      end
+    end)
+  end)
+end
+
 return {
   {
     "neovim/nvim-lspconfig",
@@ -98,7 +159,9 @@ return {
         capabilities = require("blink.cmp").get_lsp_capabilities(),
         settings = {
           ["rust-analyzer"] = {
-            -- 没有 Cargo 工程，别去跑 cargo check
+            -- 这里**不开** rust-analyzer 自带的 flycheck：rust-project.json 是非 Cargo 工程，
+            -- flycheck 跑不起来（会报 "no input filename given"）。
+            -- 编译级检查用下面的 rustc_check（保存时直接调 rustc，和判题器同一套诊断）。
             checkOnSave = false,
             -- 明确指向生成的工程描述（每个 .rs 各自是一个 crate root）
             linkedProjects = { SOLUTIONS .. "/rust-project.json" },
@@ -115,6 +178,14 @@ return {
           if vim.startswith(vim.api.nvim_buf_get_name(0), SOLUTIONS .. "/") then
             ensure_rust_project()
           end
+        end,
+      })
+
+      -- 保存 .rs 时就跑一次 rustc 检查（和判题器同一套诊断）
+      vim.api.nvim_create_autocmd("BufWritePost", {
+        pattern = "*.rs",
+        callback = function(args)
+          rustc_check(args.buf)
         end,
       })
 
@@ -146,6 +217,14 @@ return {
           map("n", "[d", function()
             vim.diagnostic.jump({ count = -1 })
           end, "上一个诊断")
+
+          if vim.bo[ev.buf].filetype == "rust" then
+            -- 打开就先查一次，然后保存时自动查
+            map("n", "<leader>lC", function()
+              rustc_check(ev.buf)
+            end, "本地 rustc 编译检查")
+            rustc_check(ev.buf)
+          end
 
           -- 保存时自动格式化：
           --   C/C++ → clangd 内置 clang-format，风格读 .clang-format（LLVM）
