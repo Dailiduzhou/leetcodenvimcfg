@@ -91,7 +91,16 @@ return {
     version = "1.*",
     event = "InsertEnter",
     opts = {
-      keymap = { preset = "default" },
+      -- 按键：blink 的 `default` preset 里**没有 Enter 接受**（只给了 <C-y>），
+      -- 所以之前菜单能弹出来、Tab/Enter 却都没反应。这里用你主配置（LazyVim）同款的
+      -- `enter` preset（Enter 接受），并额外让 Tab/Shift-Tab 能移动选中项，
+      -- 菜单没开时 fallback 回普通 Tab（缩进）/snippet 跳位。
+      keymap = {
+        preset = "enter",
+        ["<Tab>"] = { "select_next", "snippet_forward", "fallback" },
+        ["<S-Tab>"] = { "select_prev", "snippet_backward", "fallback" },
+        ["<C-y>"] = { "select_and_accept", "fallback" },
+      },
       appearance = { nerd_font_variant = "mono" },
       sources = { default = { "lsp", "buffer", "path" } },
       completion = {
