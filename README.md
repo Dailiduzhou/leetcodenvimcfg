@@ -2,14 +2,46 @@
 
 力扣（LeetCode 中国站）专用 Neovim 配置，独立于主配置 `~/.config/nvim`（LazyVim），互不影响。
 
+## 安装
+
+**Linux / macOS / WSL**：配置目录就是本仓库，放在 `stdpath("config")` 对应位置：
+
+```sh
+git clone <this-repo> ~/.config/leetcode          # NVIM_APPNAME=leetcode 的配置目录
+install -Dm755 ~/.config/leetcode/bin/leetcode ~/.local/bin/leetcode
+leetcode                                          # 首次启动会自动装插件
+```
+
+不想装脚本就写个别名（等价）：
+
+```sh
+alias leetcode='NVIM_APPNAME=leetcode nvim leetcode.nvim'
+```
+
+**Windows**：配置目录是 `%LOCALAPPDATA%\leetcode`。把仓库放到那里（或做个目录联接），
+然后用仓库里的 `leetcode.ps1` 做启动器：
+
+```powershell
+# 目录联接（普通用户就能建，仓库就是活配置；不必管理员）
+mklink /J "%LOCALAPPDATA%\leetcode" "<仓库路径>"
+
+# 在 $PROFILE 里 dot-source 一次，之后 leetcode 直接启动
+. "$env:LOCALAPPDATA\leetcode\leetcode.ps1"
+```
+
+两边都是 `NVIM_APPNAME=leetcode`，所以数据目录分别在 `~/.local/share/leetcode`
+与 `%LOCALAPPDATA%\leetcode-data`，和主配置（LazyVim）互不影响。
+
 ## 使用
 
-```fish
+```sh
 leetcode   # = NVIM_APPNAME=leetcode nvim leetcode.nvim
 ```
 
 首次使用在面板里选「使用Cookie登录」，粘贴浏览器 F12 → Network → 任意 leetcode.cn 请求
-→ Request Headers 里的 `Cookie` 值。
+→ Request Headers 里的 `Cookie` 值。（cookie 存在 `stdpath("cache")`，
+Linux 是 `~/.cache/leetcode/`，Windows 是 `%LOCALAPPDATA%\Temp\leetcode\`，
+换机器时可以拷过去省一次登录。）
 
 ## 目录
 
@@ -31,7 +63,12 @@ which-key 都能看到）：
 `lj` 重新注入类型桩 · `lq` 退出
 
 LSP：`gd` 定义 · `gr` 引用 · `K` 悬停 · `<space>cr` 重命名 · `<space>ca` 代码操作 ·
-`<space>cf` 手动格式化 · `]d`/`[d` 跳诊断 · `<space>lC` 本地 rustc 编译检查（Rust）
+`<space>cf` 手动格式化 · `]d`/`[d` 跳诊断 · `<space>cd` 诊断详情浮窗
+
+诊断列表（Trouble，和 LazyVim 一样）：`<space>xx` 全部诊断 · `<space>xX` 当前文件 ·
+`<space>xL` 位置列表 · `<space>xQ` Quickfix · `<space>cs` 符号 · `]q`/`[q` 上下一条
+
+Rust 本地检查（clippy 优先）：`<space>lC` 立刻检查 · `<space>lF` 应用当前行的建议
 
 其它：`<C-s>` 保存 · `<Esc>` 清搜索高亮 · `<space>qq` 退出
 
@@ -76,14 +113,28 @@ rust-analyzer 在“散落的单文件”模式下没有项目描述，补全和
 **格式化**：保存时由 rust-analyzer 调 rustfmt，风格读 `solutions/.rustfmt.toml`；
 手动格式化是 `<space>cf`。
 
-**编译检查（本地就能看到判题器会报什么）**
+**本地检查 / clippy（本地就能看到判题器会报什么 + 怎么改）**
 
 rust-analyzer 不是编译器：像 `Option::cloned(...)` 歧义（E0034）、`.cloned()` 不存在（E0599）、
 函数忘了写 `Self::`（E0425）这类错它不一定报得出来，于是就出现“本地安静、一提交判题器一堆错”。
+而 rust-analyzer 自带的 flycheck（LazyVim / rustaceanvim 里保存时跑 clippy 的那条路）在
+“散落单文件 + rust-project.json”下用不了（会报 `no input filename given`）。
 
-所以本配置在**打开 / 保存 `.rs`** 时会直接用 rustc 编译一遍
-（`rustc --edition=2021 --crate-type=lib --emit=metadata`），把诊断按判题器的行列号贴进 buffer
-（source 显示为 `rustc`）；手动触发是 `<leader>lC`。
+所以本配置在**打开 / 保存 `.rs`** 时自己调编译器，用的就是 `cargo clippy` 背后那个东西：
+
+- 有 **clippy-driver** → 用它（`--edition=2021 --crate-type=lib --emit=metadata --error-format=json`），
+  于是**报错 + clippy 建议一起出来**（source 显示 `clippy`，带 `clippy::xxx` 编号）
+- 没有 clippy → 退回 `rustc`（至少保证报错和判题器一致）
+
+怎么看 / 怎么改：
+
+- `<space>xx` 打开诊断列表（Trouble），每条下面就是 clippy 的 `help: ...`（怎么改）和 `clippy::lint` 编号
+- `<space>cd` 看详情浮窗（消息 + `help:` 都在里面）
+- 光标停在有建议的那一行按 `<space>lF` 直接应用
+  （例如 `nums.len() == 0` → `nums.is_empty()`；有多个建议时会让你选）
+- 手动立刻重跑一遍：`<leader>lC`
+
+> 只有 clippy 的 machine-applicable 建议才能一键应用；其余按 `help:` 里的说明手改即可。
 
 > 另外注意：rustc 在类型检查出错后会**停止检查该函数的剩余部分**，所以修完一批错可能又冒出
 > 新的（比如 E0382 moved value）——属正常，继续修就行。
@@ -126,4 +177,19 @@ public:
 
 ## 依赖
 
-`clangd`、`g++`、`tree-sitter-cli`（nvim-treesitter main 分支装 parser 用）、`git`、`curl`。
+`nvim`(>=0.10)、`clangd`、`g++`、`tree-sitter-cli`（nvim-treesitter main 分支装 parser 用）、
+`git`、`curl`。
+
+- Arch：`sudo pacman -S clang gcc tree-sitter-cli git curl`
+- Debian/Ubuntu：`sudo apt install clangd g++ tree-sitter-cli git curl`
+- Windows：`scoop install llvm gcc tree-sitter git curl`（或 MSYS2 的 mingw64 工具链）
+
+Rust 需要 rustup 的两个组件：
+
+```
+rustup component add rust-analyzer clippy
+```
+
+- 缺 `rust-analyzer`：Rust 补全、跳转、诊断全失效（注意 rustup 的 shim 文件依然存在，
+  `executable()` 会返回 1，但实际运行会报 `Unknown binary 'rust-analyzer.exe' in official toolchain`）
+- 缺 `clippy`：本地检查自动退回 `rustc`，只是没有 clippy 建议

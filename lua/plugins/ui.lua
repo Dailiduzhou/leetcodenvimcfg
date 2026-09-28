@@ -34,6 +34,7 @@ return {
       require("which-key").add({
         { "<leader>l", group = "leetcode" },
         { "<leader>c", group = "code" },
+        { "<leader>x", group = "诊断 / 列表" },
         { "<leader>q", group = "quit" },
       })
     end,

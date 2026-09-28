@@ -1,0 +1,24 @@
+#!/bin/sh
+# LeetCode 专用 Neovim 启动器（Linux / macOS / WSL）
+#
+# 用法：leetcode
+#   等价于：NVIM_APPNAME=leetcode nvim leetcode.nvim
+#   （`leetcode.nvim` 这个“文件参数”是插件用来判断自己是否处于刷题模式的入口，
+#     别去掉；额外参数请写在前面，例如 `leetcode -c "set nu"`，
+#     这样 nvim 的最后一个参数始终是 leetcode.nvim。）
+#
+# 配置目录（本仓库）应该放在：
+#   Linux/macOS: $XDG_CONFIG_HOME/leetcode，或默认的 ~/.config/leetcode
+#   也就是 NVIM_APPNAME=leetcode 时的 stdpath("config")
+#
+# 安装（二选一）：
+#   1) 放进 PATH：install -Dm755 bin/leetcode ~/.local/bin/leetcode
+#   2) 不用脚本，在 shell 启动文件里写别名：
+#      alias leetcode='NVIM_APPNAME=leetcode nvim leetcode.nvim'
+#
+# 依赖：nvim(>=0.10)、git、clangd、g++、tree-sitter-cli、curl
+#       Rust 另需 rustup 组件：rust-analyzer、clippy
+set -eu
+
+export NVIM_APPNAME=leetcode
+exec nvim "$@" leetcode.nvim
