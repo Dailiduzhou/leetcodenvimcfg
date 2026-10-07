@@ -303,8 +303,11 @@ return {
           "clangd",
           "--background-index",
           "--clang-tidy",
-          "--header-insertion=iwyu",
-          "--completion-style=detailed",
+          -- never：不要往解答文件里补 #include。力扣已经 bits/stdc++.h + using namespace std，
+          -- 几乎不需要头文件补全；以前用 iwyu 时会顺手改你的 @leet imports 区。
+          "--header-insertion=never",
+          -- 不再用 --completion-style=detailed：那会把每个重载单独列成一项，补全条目暴涨。
+          -- 用 clangd 默认的 bundled（重载合并成一项）即可。
           -- 新版 clangd（>=18）这个参数必须带值，只写参数名会报 invalid value
           "--function-arg-placeholders=true",
           "--fallback-style=LLVM",
@@ -465,19 +468,61 @@ return {
     version = "1.*",
     event = "InsertEnter",
     opts = {
-      -- 按键：blink 的 `default` preset 里**没有 Enter 接受**（只给了 <C-y>），
-      -- 所以之前菜单能弹出来、Tab/Enter 却都没反应。这里用你主配置（LazyVim）同款的
-      -- `enter` preset（Enter 接受），并额外让 Tab/Shift-Tab 能移动选中项，
-      -- 菜单没开时 fallback 回普通 Tab（缩进）/snippet 跳位。
+      -- 按键：blink 的命令是**按顺序执行、第一个成功就停**。
+      -- 以前写成 { "select_next", "snippet_forward", ... }：菜单开着时 select_next 必定成功，
+      -- snippet_forward 永远轮不到 —— 这就是 "Tab 跳不动占位符" 的原因。这里把顺序调过来。
       keymap = {
-        preset = "enter",
-        ["<Tab>"] = { "select_next", "snippet_forward", "fallback" },
-        ["<S-Tab>"] = { "select_prev", "snippet_backward", "fallback" },
+        preset = "enter", -- <CR> 接受
+        ["<Tab>"] = { "snippet_forward", "select_next", "fallback" },
+        ["<S-Tab>"] = { "snippet_backward", "select_prev", "fallback" },
         ["<C-y>"] = { "select_and_accept", "fallback" },
       },
       appearance = { nerd_font_variant = "mono" },
-      sources = { default = { "lsp", "buffer", "path" } },
+
+      sources = {
+        -- 只留 clangd。buffer/path 会把当前 buffer 里的任意单词和文件路径也当候选。
+        default = { "lsp" },
+
+        -- 打字满 2 个字符才弹（输入 . / -> / :: 这类触发字符时不受此限制）。
+        -- 这样 for(int i = ... 里刚敲一个字母 i 时，不会再被 INT_MAX / isalnum 这种刷屏。
+        min_keyword_length = 2,
+
+        providers = {
+          lsp = {
+            -- 力扣每个文件都是 `#include <bits/stdc++.h>` + `using namespace std;`，
+            -- 于是 clangd 的候选池是整个 std + libstdc++。按 kind 把最没用的几类滤掉：
+            -- 保留 for/if 的 snippet、关键字、函数、类/结构体等。
+            transform_items = function(_, items)
+              local drop = {
+                [1] = true, -- Text        宏 / 常量（INT_MAX、INT16_MAX …）
+                [8] = true, -- Interface   概念（ranges::forward_range …）
+                [9] = true, -- Module      namespace（std、chrono …）
+                [13] = true, -- Enum
+                [20] = true, -- EnumMember  枚举成员
+                [21] = true, -- Constant
+              }
+              return vim.tbl_filter(function(item)
+                return not drop[item.kind]
+              end, items)
+            end,
+          },
+        },
+      },
+
       completion = {
+        trigger = {
+          show_on_keyword = true, -- 打字就弹（for/if 的 snippet 靠它才出来）
+          show_on_trigger_character = true, -- 输入 . -> :: 也弹
+          show_in_snippet = true, -- 占位符（高亮）期间也允许补全。Tab 不会被抢：
+          -- keymap 里 snippet_forward 排在 select_next 前面，有占位符时 Tab 先跳位。
+          -- 想在 snippet 里选补全项：<C-n>/<Down> 选，<CR> 接受；或 <C-y> 直接接受第一项。
+        },
+        list = {
+          selection = {
+            preselect = true, -- 菜单弹出时高亮第一项，<CR> 可直接接受
+            auto_insert = false, -- 默认 true：Tab 翻项时会把候选文本直接插进 buffer；关掉更不打断输入
+          },
+        },
         documentation = { auto_show = true, auto_show_delay_ms = 200 },
         menu = { draw = { treesitter = { "lsp" } } },
       },
