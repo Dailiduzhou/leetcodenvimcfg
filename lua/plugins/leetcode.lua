@@ -6,14 +6,34 @@ local SOLUTIONS = require("lc").solutions
 -- 生成的文件（都在解答目录里，只在不存在时写，删掉会自动重建）
 -- ─────────────────────────────────────────────────────────────────────────────
 
+-- clangd 用哪个编译器当“驱动”去问系统头文件路径。
+--
+-- 为什么不能写死 g++：
+--   Linux/WSL 上 g++ 就是 GCC，自带 libstdc++，`#include <bits/stdc++.h>` 找得到；
+--   macOS 上 /usr/bin/g++ 其实是 Apple clang 的马甲，用的是 libc++，
+--   而 libc++ 根本没 bits/stdc++.h —— 写死 g++ 的话整个文件会红成一片
+--   （Unknown type name / No template named 'unordered_map' …）。
+--   所以 macOS 上要找真正的 GCC（`brew install gcc` 装出来的是 g++-14 / g++-15 这种名字）。
+local function clangd_compiler()
+  if jit.os == "OSX" then
+    for _, cand in ipairs({ "g++-15", "g++-14", "g++-13", "g++-12" }) do
+      if vim.fn.executable(cand) == 1 then
+        return cand
+      end
+    end
+  end
+  return "g++"
+end
+local CLANGD_COMPILER = clangd_compiler()
+
 -- clangd 配置：力扣的解答是单文件、没有 compile_commands.json，
--- 关键的是 `Compiler: g++`——clangd 会用 g++ 当驱动去问系统头文件路径，
+-- 关键的是 `Compiler:`——clangd 会用这个驱动去问系统头文件路径，
 -- 否则 `#include <bits/stdc++.h>`、libstdc++ 的头文件会全部报红。
 local CLANGD_CONFIG = string.format([[
 # 由 ~/.config/leetcode/lua/plugins/leetcode.lua 生成
 # 文件被删掉的话，下次打开力扣会自动重建；你手动改过的内容不会被覆盖
 CompileFlags:
-  Compiler: g++
+  Compiler: %s
   Add:
     # 力扣判题器若不支持 C++20，把下面这行改成 -std=c++17
     - -std=c++20
@@ -31,7 +51,7 @@ Completion:
 Index:
   # 一堆互不相干的单文件，没必要后台建索引
   Background: Skip
-]], SOLUTIONS)
+]], CLANGD_COMPILER, SOLUTIONS)
 
 -- clang-format 风格：clangd 内置的格式化器（保存时格式化用的就是它）会读这个文件
 local CLANG_FORMAT = [[
@@ -236,6 +256,19 @@ return {
     ensure_file(SOLUTIONS .. "/.rustfmt.toml", RUSTFMT_CONFIG)
     ensure_file(SOLUTIONS .. "/lc-stubs.h", CPP_STUBS)
     ensure_file(SOLUTIONS .. "/lc-stubs.rs", RUST_STUBS)
+
+    -- macOS 上没有真正的 GCC 时，bits/stdc++.h 必然找不到，早点说清楚
+    if jit.os == "OSX" and CLANGD_COMPILER == "g++" then
+      vim.schedule(function()
+        vim.notify(
+          "macOS 上没找到真正的 GCC（g++-14 / g++-15 …）。\n"
+            .. "clangd 会退回 Apple clang 的 libc++，而它没有 bits/stdc++.h，\n"
+            .. "C++ 解答会满屏报错、补全也不可用。\n修复：brew install gcc 后重开。",
+          vim.log.levels.WARN,
+          { title = "leetcode" }
+        )
+      end)
+    end
   end,
 
   opts = {

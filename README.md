@@ -175,7 +175,11 @@ rust-analyzer 不是编译器：像 `Option::cloned(...)` 歧义（E0034）、`.
 
 解答目录里的 `.clangd` 由 `lua/plugins/leetcode.lua` 自动生成，删掉会自动重建：
 
-- `Compiler: g++`：clangd 借 g++ 驱动拿到系统头文件路径，`#include <bits/stdc++.h>` 才不会报错
+- `Compiler:`：clangd 借一个**真 GCC** 当驱动去问系统头文件路径，
+  `#include <bits/stdc++.h>`（libstdc++ 的头）才不会报错。Linux/WSL 上是 `g++`；
+  **macOS 上 /usr/bin/g++ 其实是 Apple clang 的马甲**（libc++ 里根本没有 bits/stdc++.h），
+  所以会自动选 `g++-15` / `g++-14` / `g++-13` / `g++-12` 里第一个存在的，
+  都没有就退回 `g++` 并弹一条警告提醒你 `brew install gcc`
 - `-std=c++20`：判题器若不支持 C++20，改成 `-std=c++17`
 - 屏蔽了力扣场景下的噪音警告（模板没写 main、形参用不到、函数体还空着的 return-type 等）
 
@@ -211,6 +215,9 @@ public:
 
 - Arch：`sudo pacman -S clang gcc tree-sitter-cli git curl`
 - Debian/Ubuntu：`sudo apt install clangd g++ tree-sitter-cli git curl`
+- macOS：`brew install llvm gcc tree-sitter git curl` —— 这里的 **gcc 是必需的**
+  （不是 Apple 的 clang）：clangd 要靠它拿到 libstdc++，否则 `bits/stdc++.h` 找不到，
+  C++ 解答会成片报错；装了以后 `.clangd` 会自动把 `Compiler` 指向 `g++-14` / `g++-15`
 - Windows：`scoop install llvm gcc tree-sitter git curl`（或 MSYS2 的 mingw64 工具链）
 
 Rust 需要 rustup 的两个组件：
